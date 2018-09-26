@@ -19,6 +19,9 @@ library(grid)
 library(outliers)
 library(e1071)
 library(DMwR)
+library(tree)
+library(MASS)
+library(randomForest)
 
 
 
@@ -26,17 +29,17 @@ library(DMwR)
 #############################
 #     DATA EXPLORATION      #
 #############################
-
-
 rent_df = read.csv('day.csv',header = T) #loading the dataset
 str(rent_df) #data structure
 dim(rent_df) #data dimension
 missing_values <- rent_df %>% 
                   summarize_all(funs(sum(is.na(.))/n())) #missing value analysis
 rent_df$instant <- NULL 
+rent_df$dteday <- NULL
 
 
-rent_df_analysis <- rent_df
+rent_df_analysis <- rent_df #for analysis and adding new variables
+
 
 
 
@@ -72,8 +75,8 @@ rent_df$day.type[rent_df$holiday==0 & rent_df$workingday==0]= 1 #weekend
 rent_df$day.type[rent_df$holiday==1]= 2 #holiday
 rent_df$day.type[rent_df$holiday==0 & rent_df$workingday==1]= 3 #working day
 as.numeric(rent_df$day.type)
-
-
+rent_df$workingday<- NULL
+rent_df$holiday <- NULL
 
 
 #De-Normalizing temperature and absolute temperature 
@@ -99,6 +102,17 @@ rent_df_analysis$raw_humidity <- (rent_df_analysis$hum * 100) #de-norm humidity
 #feature for de-normalized windspeed
 rent_df_analysis$raw_wind <- (rent_df_analysis$windspeed * 67) #de-norm windspeed 
 
+#Creating new Variable for temperature type
+rent_df_analysis$temp_type <- cut(rent_df_analysis$raw_temp,
+                                  breaks = c(-Inf,10,20,39),
+                                  labels = c("Cold","Moderate","Hot"))
+as.numeric(rent_df_analysis$temp_type)
+rent_df$temp_type <- rent_df_analysis$temp_type #adding it to the main dataset
+rent_df$temp <- NULL #removing them because adding the temperature category
+rent_df$atemp <- NULL 
+
+
+
 
 
 
@@ -108,7 +122,11 @@ rent_df_analysis$raw_wind <- (rent_df_analysis$windspeed * 67) #de-norm windspee
 #################################
 
 #--------Bi-Variate Analysis--------------#
+
+
+
 #--------Hypothesis Testing With Visualizations------
+
 
 
 
@@ -135,6 +153,10 @@ p1 <- ggplot() + theme_bw() +
   ggtitle("Daily Rental Average") +
   scale_colour_manual(values=colour) 
 p1 #lineplot for daily average rents 
+
+
+
+
 
 
 #-------------  Hypothesis 2---------------
@@ -165,8 +187,14 @@ p2 <- ggplot() + theme_bw() +
 p2 #line plots for average monthly rentals 
 
 
+
+
+
+
+
+
 #-------------  Hypothesis 3---------------
-#Is there relation between season and bike rentals?
+#Is there relation between months and bike rentals?
 summary(aov(cnt ~ as.factor(mnth), data = rent_df)) 
 TukeyHSD(aov(cnt ~ as.factor(mnth), data = rent_df))
 #Conclusion: P-value < 0.05, means we accept the null hypothesis and theres' relation
@@ -190,59 +218,96 @@ p3 <- ggplot(monthly_avg, aes(x = mnth,y = mean_size,color = as.factor(yr))) +
          theme(plot.title = element_text(size = 11, face="bold"))
 p3 #lineplot for average rents per months for year 2011 and 2012
 
-#-------------  Hypothesis 4---------------
-
-#Is there relation between months and bike rentals?
-summary(aov(cnt ~ as.factor(mnth), data = rent_df)) 
-TukeyHSD(aov(cnt ~ as.factor(mnth), data = rent_df))
-#Conclusion: P-value < 0.05, means we accept the null hypothesis and theres' relation
 
 
-#------------------- Plot 4 -----
 
-#-------------  Hypothesis 5---------------
 
-#Is there relation between year and bike rentals?
-summary(aov(cnt ~ as.factor(holiday), data = rent_df)) 
-TukeyHSD(aov(cnt ~ as.factor(holiday), data = rent_df))
-#Conclusion: P-value = 0.06, means we can't reject the null hypothesis 
 
-#------------------- Plot 5 -----------------------
 
-holiday_avg <- rent_df %>%
-  group_by(weekday,holiday) %>%
+
+#-------------------Hypothesis 4 ----------
+#Is there a relation between the day_type and the rental count?
+summary(aov(cnt ~ as.factor(day.type), data = rent_df)) 
+
+#------------------Plot 4----------
+daytype_avg <- rent_df %>%
+  group_by(day.type,yr) %>%
   summarize(mean_size = mean(cnt,na.rm = T)) 
   as.data.frame %>%
-  write.table()  #months and years grouped data
-  
+  write.table() #grouped daytypes and years
 
-p5 <- ggplot(holiday_avg, aes(x = weekday,y = mean_size,
-                              color = as.factor(holiday))) +
-    geom_smooth(method = "loess", fill = NA, size = 2.0 ) +
+p4 <- ggplot(daytype_avg, aes(x = as.numeric(day.type),y = mean_size,color = as.factor(yr))) +
+    geom_smooth(method = "loess", fill = NA, size = 1.5) +
     theme_light(base_size = 10) +
     theme(legend.position="bottom", legend.direction="horizontal",
           legend.title = element_blank()) +
-    xlab("Days") +
+    xlab("Day Type") +
     ylab("Number of Bike Rentals") +
-    ggtitle("Daily Average Rentals on Holidays") +
-    scale_x_continuous(breaks=seq(0,6,1)) +
+    ggtitle("Day Type Average Rentals") +
+    scale_x_continuous(breaks=seq(1,3,1)) +
     theme(plot.title = element_text(size = 11, face="bold"))
-p5 #lineplot for average rents per months for year 2011 and 2012
+p4 #lineplot for average rents on the basis of dayt for year 2011 and 2012
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#-------------- Hypothesis 5-----
+#Is the temperature related with the bike rentals
+t.test(rent_df_analysis$temp, rent_df_analysis$cnt, paired = FALSE)
+#Conclusion: The p-value < 0.05 and the null hypothesis is rejected
+summary(aov(cnt ~ as.factor(temp_type), data = rent_df_analysis)) 
+#------------------Plot 5----------
+temptype_avg <- rent_df_analysis %>%
+  group_by(temp_type,mnth) %>%
+  summarize(mean_size = mean(cnt,na.rm = T)) 
+  as.data.frame %>%
+  write.table() #grouped daytypes and years
+
+p5 <- ggplot() + theme_bw() +
+    geom_line(aes(y = mean_size, x = as.numeric(temp_type)), size=1.3, data = temptype_avg,
+              stat="identity",colour = 'deeppink') +
+    theme(legend.position="bottom", legend.direction="horizontal",
+          legend.title = element_blank()) +
+    scale_x_continuous(breaks=seq(1,3,1)) +
+    labs(x="Temperature Type", y="Bike Rents") +
+    ggtitle("Temperature Rental Average") +
+    scale_colour_manual(values=colour)
+p5 
+  
+  
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 
 
 #-------------- Hypothesis 6-----
-#Is the temperature related with the bike rentals
-t.test(rent_df$temp, rent_df$cnt, paired = FALSE)
-#Conclusion: The p-value < 0.05 and the null hypothesis is rejected
-
-
-#-------------- Hypothesis 7-----
 #Is the humidity related with the bike rentals
 t.test(rent_df$hum,rent_df$cnt, paired = FALSE)
 #Conclusion: The p-value < 0.05 and the null hypothesis is rejected
+  
 
 
 
@@ -250,17 +315,22 @@ t.test(rent_df$hum,rent_df$cnt, paired = FALSE)
 
 
 
-#--------------Hypothesis 8--------
+
+
+
+
+
+#--------------Hypothesis 7--------
 #Is there any difference between normal temperature and the feeled temp.
 #Two sampled t-tests between normal and feeled temp.
 t.test(x = rent_df$temp, y = rent_df$atemp, alternative = "two.sided")
 #Conclusion: p-Value < 0.05 and the null hypothesis can't be rejected
 
-#--------------Plot 8------------
+#--------------Plot 7------------
 hist(rent_df_analysis$raw_temp, yaxt = "n", xaxt = "n", xlab = "",
      ylab = "", main = "Two Sample t-test", 
      xlim = c(5, 40), col = rgb(0, 0, 1, alpha = .1))
-text(x = 13, y = 140, paste("Mean real Temp.\n",round(mean(rent_df_analysis$raw_temp), 2), sep = ""), col = "blue")
+text(x = 50, y = 140, paste("Mean real Temp.\n",round(mean(rent_df_analysis$raw_temp), 2), sep = ""), col = "blue")
 abline(v = mean(rent_df_analysis$raw_temp), lty = 1,
        col = rgb(0, 0, 1, alpha = 1), lwd = 4)
 
@@ -270,7 +340,7 @@ hist(rent_df_analysis$raw_atemp, yaxt = "n", xaxt = "n", xlab = "",
 
 abline(v = mean(rent_df_analysis$raw_atemp), lty = 1,
        col = rgb(1, 0, 0, alpha = 1), lwd = 4)
-text(x= 32, y = 131, paste("Mean feeled Temp.\n", round(mean(rent_df_analysis$raw_atemp), 2), sep = ""),  col = "red")
+
 
 mtext(text = "Alternative Hypothesis is confirmed true difference in means is not equal to 0", line = 0, side = 3)
 #Plot represents there is no significant mean difference 
@@ -279,7 +349,15 @@ mtext(text = "Alternative Hypothesis is confirmed true difference in means is no
 
 
 
-#------------------- Plot 9 -----------------------
+
+
+
+
+
+
+
+
+#------------------- Plot 8 -----------------------
 #Displaying mean on the plot
 grob1 <- grobTree(textGrob(paste0("Mean temp: ",mean(rent_df_analysis$raw_temp)), 
                           x=0.1,  y=0.95, hjust=0,
@@ -287,7 +365,7 @@ grob1 <- grobTree(textGrob(paste0("Mean temp: ",mean(rent_df_analysis$raw_temp))
 
 
 #Histogram plot for temperatures
-p6 <- ggplot(rent_df_analysis, aes(x=raw_temp,y = cnt) ) +
+p6 <- ggplot(rent_df_analysis, aes(x=raw_temp) ) +
       geom_histogram(color = "goldenrod",fill="yellow",binwidth = 1) +
       labs(x = "Temperature in °C",y = "No. of Days")+
       ggtitle("Varying Temperatures") +
@@ -298,7 +376,9 @@ p6 <- ggplot(rent_df_analysis, aes(x=raw_temp,y = cnt) ) +
 p6
 
 
-#------------------- Plot 10 -----------------------
+
+
+#------------------- Plot 9 -----------------------
 #text on plots
 grob2 <- grobTree(textGrob(paste0("Mean temp: ",mean(rent_df_analysis$raw_atemp)), 
                            x=0.05,  y=0.95, hjust=0,
@@ -317,7 +397,7 @@ p7 <- ggplot(rent_df_analysis, aes(x=raw_atemp))+
 p7
 
 
-#------------------- Plot 11 -----------------------
+#------------------- Plot 10 -----------------------
 #Text on plot
 grob3 <- grobTree(textGrob(paste0("Mean Humidity: ",mean(rent_df_analysis$raw_humidity)), 
                            x=0.020,  y=0.70, hjust=0,
@@ -336,7 +416,7 @@ p8
 
 
 
-#------------------- Plot 12 -----------------------
+#------------------- Plot 11 -----------------------
 
 #No. of registered users in both years
 p9 <- ggplot(rent_df,aes(x = as.factor(yr),y = registered)) +
@@ -347,7 +427,7 @@ p9 <- ggplot(rent_df,aes(x = as.factor(yr),y = registered)) +
 p9
 
 
-#------------------- Plot 13 -----------------------
+#------------------- Plot 12 -----------------------
 #No. of casual users in both years
 p10 <- ggplot(rent_df,aes(x = as.factor(yr),y = casual)) +
   geom_boxplot(color = "goldenrod2",fill = "yellow") +
@@ -358,7 +438,7 @@ p10
 #Conclusion: The casual users decreased in 2012 which means the company increase its'
 #Users' base
 
-#------------------ Plot 14 -------------------------
+#------------------ Plot 13 -------------------------
 
 #Casual Users in holidays
 p11 <- ggplot(rent_df,aes(x = as.factor(holiday),y = casual)) +
@@ -368,7 +448,7 @@ p11 <- ggplot(rent_df,aes(x = as.factor(holiday),y = casual)) +
   ggtitle("Casual Users index in Holidays")
 p11
 #Conclusion: There are more casual users in the holidays
-#------------------ Plot 15 -------------------------
+#------------------ Plot 14 -------------------------
 
 #Casual Users in holidays
 p12 <- ggplot(rent_df,aes(x = as.factor(holiday),y = registered)) +
@@ -379,7 +459,7 @@ p12 <- ggplot(rent_df,aes(x = as.factor(holiday),y = registered)) +
 p12
 #Conclusion: High Demand in Holidays for Registered Users
 
-#------------------ Plot 16 -------------------------
+#------------------ Plot 15 -------------------------
 
 #Daily Casual Users
 p13 <- ggplot(rent_df,aes(x = as.factor(weekday),y = casual)) +
@@ -391,7 +471,7 @@ p13 <- ggplot(rent_df,aes(x = as.factor(weekday),y = casual)) +
 p13
 
 
-#------------------ Plot 17 -------------------------
+#------------------ Plot 16 -------------------------
 
 #Daily Casual Users
 p14 <- ggplot(rent_df,aes(x = as.factor(weekday),y = registered)) +
@@ -402,7 +482,7 @@ p14 <- ggplot(rent_df,aes(x = as.factor(weekday),y = registered)) +
   ggtitle("Daily Registered Users Index")
 p14
 
-#-------------------Plot 18 ------------------------
+#-------------------Plot 17 ------------------------
 #correlation plot
 corrgram(rent_df, order = F, lower.panel = panel.shade,
          upper.panel=panel.pie, text.panel=panel.txt, main = "Correlation Plot")
@@ -425,31 +505,27 @@ corrgram(rent_df, order = F, lower.panel = panel.shade,
 #-----------model 1----------
 
 #Linear Regression for all the features
-model1 <- lm(formula = cnt~. -dteday-casual-registered-workingday-holiday-atemp,rent_df)
+model1 <- lm(formula = cnt~ .-registered-casual,rent_df)
 summary(model1)
 vif(model1, threshold = 4, verbose = TRUE)
 
-#-----------model 2----------
-model2 <- lm(formula = cnt ~ yr+mnth+weekday+weathersit+temp+hum+
-             windspeed+day.type, data = rent_df)
-summary(model2)          
-vif(model2, threshold = 4, verbose = TRUE)
+#Parameter Tuning
 
-#-----------model 3----------
-model3 <- lm(formula = cnt ~ yr+season+day.type+weekday+temp, data = rent_df)
-summary(model3)          
-vif(model3, threshold = 4, verbose = TRUE)
+#----------- tuned model ----------
+tuned_model <- lm(formula = cnt ~ .-registered-casual-season-mnth, data = rent_df)
+summary(tuned_model) #removed variables with VIF > 3         
+vif(tuned_model, threshold = 4, verbose = TRUE)
 
-#-----------model 4----------
-model4 <- lm(formula = cnt ~ temp+season+weathersit+day.type+yr+hum+windspeed, data = rent_df)
-summary(model4)          
-vif(model4, threshold = 4, verbose = TRUE)
+#-----------tuned model 2----------
+tuned_model2 <- lm(formula = cnt ~ .-registered-casual-season-mnth-weathersit-hum, data = rent_df)
+summary(tuned_model2) #removed variables with VIF > 1.5 
+vif(tuned_model2, threshold = 4, verbose = TRUE)
 
 #------model validation-----
 #Linear Regression Model Development with model 1 variables as these combination
 #gives a good r-squared value than other models
 data_lm = rent_df[,c("season","yr","mnth","weekday","weathersit",
-                     "temp","hum","windspeed","day.type","cnt")]
+                     "hum","windspeed","day.type","temp_type","cnt")]
 
 #Train- Test Splitting
 n = nrow(data_lm)
@@ -459,24 +535,67 @@ lm_train <- data_lm[indx == 1,]
 lm_test <- data_lm[indx == 2,]
 
 
-lm_train_model = lm(cnt~.,data_lm)
+lm_train_model = lm(cnt~.,lm_train)
+
 
 pred = predict(lm_train_model,lm_test[,-10]) #prediction on the test data
-actuals_preds <- data.frame(cbind(actuals=lm_test$cnt, predicteds=pred))
 
+actuals_preds <- data.frame(cbind(actuals=lm_test$cnt, predicteds=pred))
 correlation_accuracy <- cor(actuals_preds) #actual vs predicted correlation
 
 correlation_accuracy 
-#accuracy = 88.27%
+#accuracy = 89.88%
 
+rmse_tain = sqrt(mean(lm_train_model$residuals^2))
+rmse_tain
 
 DMwR::regr.eval(actuals_preds$actuals, actuals_preds$predicteds)
-#rmse = 89.7
+#rmse_test = 82.03
 #mape = 1.97%
 
 
 
+
+
+
+
+
+
+
+
+#-----------model 2---------
+#Decision Tree Regressor
+dt_train <- data_lm[indx == 1,]
+dt_test <- data_lm[indx == 2,]
+
+
+#training model
+dt_regression = tree(cnt~ .,dt_train)
+summary(tree.regression)
+plot(dt_regression)
+text(dt_regression, pretty=0)
+
+#test predictions
+dt_pred = predict(dt_regression,dt_test[,-10]) 
+
+
+#actual vs predicted correlation
+dt_actuals_preds <- data.frame(cbind(actuals=dt_test$cnt, predicteds=dt_pred))
+dt_correlation_accuracy <- cor(dt_actuals_preds) 
+dt_correlation_accuracy 
+
+
+#-----------------Model Validation-----
+#RMSE 
+dt_rmse = sqrt(mean((dt_pred - dt_test[,10])^2))
+dt_rmse
+
+DMwR::regr.eval(dt_actuals_preds$actuals, dt_actuals_preds$predicteds)
+
+
 ################################
-# with all efforts
-# - a datascience enthusiast
+#         PROJECT ENDS
 ################################
+
+
+
